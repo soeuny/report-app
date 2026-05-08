@@ -1,0 +1,157 @@
+export interface StandardAdData {
+  id: string; // 고유 ID
+  platform: string; // 네이버 쇼핑, 파워링크, GFA, 쿠팡 등
+  dataType: 'daily' | 'keyword'; // 데이터 종류 (일별/키워드)
+  campaignName: string; // 캠페인명
+  adGroupName: string; // 광고그룹명
+  keyword: string; // 키워드 (해당하는 경우)
+  date: string; // 날짜 (YYYY-MM-DD)
+  impressions: number; // 노출수
+  clicks: number; // 클릭수
+  ctr: number; // 클릭률 (%)
+  cpc: number; // 평균 CPC (원)
+  cost: number; // 총 광고비 (원)
+  conversions: number; // 전환수
+  cpa: number; // 전환당 비용 (원)
+  cvr: number; // 전환율 (%)
+  roas: number; // 광고수익률 (%)
+}
+
+// 공통 컬럼 매핑 사전 (매체 구분 없이 유연하게 탐색)
+const COMMON_MAPPINGS = {
+  campaignName: ['캠페인', 'campaign'],
+  adGroupName: ['광고그룹', '그룹명', 'adgroup'],
+  keyword: ['키워드', 'keyword'],
+  date: ['날짜', '일자', '기간', 'date'],
+  impressions: ['노출', 'impression'],
+  clicks: ['클릭', 'click'],
+  cost: ['비용', '광고비', '지출액', '총비용', '소진', 'cost'],
+  conversions: ['전환', '결제수', '구매수', '구매건수', 'conversion'],
+  roas: ['roas', '수익률'],
+};
+
+/**
+ * 엑셀 헤더 문자열을 정규화하여 표준 지표 키를 찾습니다.
+ */
+function findStandardKey(rawHeader: string): string | null {
+  if (!rawHeader || typeof rawHeader !== 'string') return null;
+  const normalizedHeader = rawHeader.replace(/\s+/g, '').toLowerCase();
+  
+  for (const [standardKey, possibleNames] of Object.entries(COMMON_MAPPINGS)) {
+    for (const name of possibleNames) {
+      const normalizedName = name.replace(/\s+/g, '').toLowerCase();
+      if (normalizedHeader.includes(normalizedName)) {
+        return standardKey;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * 값을 숫자로 안전하게 변환합니다.
+ */
+function parseNumber(value: any): number {
+  if (typeof value === 'number') return value;
+  if (!value) return 0;
+  
+  const cleaned = String(value).replace(/,/g, '').replace(/%/g, '').replace(/원/g, '').trim();
+  const parsed = Number(cleaned);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * 엑셀 2차원 배열 데이터를 표준 포맷(StandardAdData)으로 파싱합니다.
+ * @param rawData XLSX.utils.sheet_to_json(ws, { header: 1 }) 결과값
+ */
+export function normalizeData(rawData: any[][], platform: string, dataType: 'daily' | 'keyword'): StandardAdData[] {
+  if (!rawData || !Array.isArray(rawData) || rawData.length === 0) return [];
+
+  // 1. 헤더 행(Row) 찾기
+  // 가장 많은 매핑 키워드가 발견된 행을 헤더 행으로 간주
+  let headerRowIndex = 0;
+  let maxMatchCount = 0;
+  let bestHeaderMap: Record<number, string> = {}; // { 열인덱스: '표준키' }
+
+  // 처음 20줄 이내에서 헤더를 탐색 (보통 상단에 위치)
+  for (let i = 0; i < Math.min(rawData.length, 20); i++) {
+    const row = rawData[i];
+    if (!Array.isArray(row)) continue;
+
+    let matchCount = 0;
+    const currentHeaderMap: Record<number, string> = {};
+
+    row.forEach((cellValue, colIndex) => {
+      const standardKey = findStandardKey(String(cellValue));
+      if (standardKey) {
+        matchCount++;
+        currentHeaderMap[colIndex] = standardKey;
+      }
+    });
+
+    if (matchCount > maxMatchCount) {
+      maxMatchCount = matchCount;
+      headerRowIndex = i;
+      bestHeaderMap = currentHeaderMap;
+    }
+  }
+
+  // 인식된 헤더가 2개 미만이면 실패로 간주
+  if (maxMatchCount < 2) {
+    console.warn('데이터 열을 인식하지 못했습니다. (매핑 실패)');
+    return [];
+  }
+
+  // 2. 실제 데이터 파싱
+  const results: StandardAdData[] = [];
+  
+  // 헤더 다음 줄부터 읽기
+  for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+    const row = rawData[i];
+    if (!Array.isArray(row) || row.length === 0) continue;
+    
+    // 빈 행(모든 값이 undefined/빈문자열) 건너뛰기
+    const isEmpty = row.every(cell => cell === null || cell === undefined || cell === '');
+    if (isEmpty) continue;
+
+    const mappedRow: Partial<StandardAdData> = {
+      id: `${platform}-${i}-${Date.now()}`,
+      platform: platform,
+      dataType: dataType,
+    };
+
+    // 추출된 헤더 맵을 기반으로 열 값 매핑
+    Object.entries(bestHeaderMap).forEach(([colIndexStr, standardKey]) => {
+      const colIndex = parseInt(colIndexStr, 10);
+      const value = row[colIndex];
+      
+      if (['impressions', 'clicks', 'cost', 'conversions'].includes(standardKey)) {
+        mappedRow[standardKey as keyof StandardAdData] = parseNumber(value) as never;
+      } else if (standardKey === 'roas') {
+        mappedRow[standardKey as keyof StandardAdData] = parseNumber(value) as never;
+      } else {
+        mappedRow[standardKey as keyof StandardAdData] = (value !== undefined && value !== null) ? String(value) : '-' as never;
+      }
+    });
+
+    // 노출수나 클릭수 등 핵심 지표가 아예 없으면 유효하지 않은 데이터로 간주하고 무시 (합계(총계) 행 등 제외용)
+    if (mappedRow.impressions === undefined && mappedRow.clicks === undefined && mappedRow.cost === undefined) {
+      continue;
+    }
+
+    // 3. 파생 지표 자동 계산
+    const imp = (mappedRow.impressions as number) || 0;
+    const clk = (mappedRow.clicks as number) || 0;
+    const cost = (mappedRow.cost as number) || 0;
+    const conv = (mappedRow.conversions as number) || 0;
+
+    mappedRow.ctr = imp > 0 ? (clk / imp) * 100 : 0;
+    mappedRow.cpc = clk > 0 ? cost / clk : 0;
+    mappedRow.cpa = conv > 0 ? cost / conv : 0;
+    mappedRow.cvr = clk > 0 ? (conv / clk) * 100 : 0;
+    
+    results.push(mappedRow as StandardAdData);
+  }
+
+  return results;
+}
