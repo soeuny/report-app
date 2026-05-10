@@ -15,19 +15,23 @@ export interface StandardAdData {
   cpa: number; // 전환당 비용 (원)
   cvr: number; // 전환율 (%)
   roas: number; // 광고수익률 (%)
+  campaignType?: string; // 캠페인유형 (파워링크, 쇼핑검색 등)
+  conversionRevenue?: number; // 구매완료 전환매출액(원)
 }
 
 // 공통 컬럼 매핑 사전 (매체 구분 없이 유연하게 탐색)
 const COMMON_MAPPINGS = {
   campaignName: ['캠페인', 'campaign'],
   adGroupName: ['광고그룹', '그룹명', 'adgroup'],
-  keyword: ['키워드', 'keyword'],
+  keyword: ['키워드', 'keyword', '검색어', '확장검색어'],
   date: ['날짜', '일자', '기간', 'date'],
   impressions: ['노출', 'impression'],
   clicks: ['클릭', 'click'],
   cost: ['비용', '광고비', '지출액', '총비용', '소진', 'cost'],
   conversions: ['전환', '결제수', '구매수', '구매건수', 'conversion'],
   roas: ['roas', '수익률'],
+  campaignType: ['캠페인유형', 'campaigntype', '유형'],
+  conversionRevenue: ['전환매출', '전환매출액', '매출액', 'revenue', '구매완료전환매출액', '구매완료전환매출액(원)'],
 };
 
 /**
@@ -125,7 +129,7 @@ export function normalizeData(rawData: any[][], platform: string, dataType: 'dai
       const colIndex = parseInt(colIndexStr, 10);
       const value = row[colIndex];
       
-      if (['impressions', 'clicks', 'cost', 'conversions'].includes(standardKey)) {
+      if (['impressions', 'clicks', 'cost', 'conversions', 'conversionRevenue'].includes(standardKey)) {
         mappedRow[standardKey as keyof StandardAdData] = parseNumber(value) as never;
       } else if (standardKey === 'roas') {
         mappedRow[standardKey as keyof StandardAdData] = parseNumber(value) as never;

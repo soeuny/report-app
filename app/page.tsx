@@ -4,6 +4,8 @@ import { useState, useRef } from 'react';
 import { UploadCloud, FileSpreadsheet, Download, DollarSign, TrendingUp, MousePointerClick, Activity, Play, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { normalizeData, StandardAdData } from '@/lib/data-parser';
 
 type ZoneKey = 'naver_daily' | 'naver_keyword' | 'gfa_daily' | 'coupang_daily' | 'coupang_keyword' | 'report_form';
@@ -80,7 +82,7 @@ export default function DashboardPage() {
           const workbook = XLSX.read(data, { type: 'binary' });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+          const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as any[][];
           resolve(json);
         } catch (error) {
           reject(error);
@@ -128,74 +130,143 @@ export default function DashboardPage() {
   };
 
   const handleDownloadExcel = async () => {
-    let wb = XLSX.utils.book_new();
-
-    // 1. 보고서 폼(템플릿) 파일이 있다면 베이스로 불러오기
-    if (reportFormFiles.length > 0) {
-      try {
-        const fileData = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string);
-          reader.onerror = reject;
-          reader.readAsBinaryString(reportFormFiles[0]);
-        });
-        wb = XLSX.read(fileData, { type: 'binary' });
-      } catch (err) {
-        console.error("보고서 폼 읽기 오류:", err);
-        alert("보고서 폼을 읽는 중 오류가 발생했습니다. 새 파일로 생성합니다.");
-      }
+    if (reportFormFiles.length === 0) {
+      alert("보고서 폼 파일을 먼저 업로드해주세요.");
+      return;
     }
 
-    // 2. [요약] 시트 (매체별 합산)
-    const summaryData = parsedData.reduce((acc: any, curr) => {
-      if (!acc[curr.platform]) {
-        acc[curr.platform] = { 매체: curr.platform, 광고비: 0, 노출수: 0, 클릭수: 0, 전환수: 0 };
+    const file = reportFormFiles[0];
+    const workbook = new ExcelJS.Workbook();
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      await workbook.xlsx.load(arrayBuffer);
+    } catch (err) {
+      console.error("보고서 폼 읽기 오류:", err);
+      alert("보고서 폼을 읽는 중 오류가 발생했습니다.");
+      return;
+    }
+
+    // 좀 더 유연한 날짜 추출 (e.g. "2026. 05. 07.", "2026-05-07")
+    const extractDay = (dateStr: string) => {
+      if (!dateStr || dateStr === '-') return null;
+      const parts = dateStr.trim().split(/[^0-9]+/);
+      if (parts.length >= 3) {
+        return parseInt(parts[2], 10);
       }
-      acc[curr.platform].광고비 += curr.cost || 0;
-      acc[curr.platform].노출수 += curr.impressions || 0;
-      acc[curr.platform].클릭수 += curr.clicks || 0;
-      acc[curr.platform].전환수 += curr.conversions || 0;
-      return acc;
-    }, {});
-    
-    // 데이터가 없더라도 빈 시트를 생성
-    const summaryRows = Object.values(summaryData);
-    const summarySheet = XLSX.utils.json_to_sheet(summaryRows.length > 0 ? summaryRows : [{ 매체: '-', 광고비: 0, 노출수: 0, 클릭수: 0, 전환수: 0 }]);
-    
-    if (wb.SheetNames.includes('요약')) wb.Sheets['요약'] = summarySheet;
-    else XLSX.utils.book_append_sheet(wb, summarySheet, '요약');
+      return null;
+    };
 
-    // 3. [매체별 일별] 시트
-    const dailyData = parsedData.filter(d => d.dataType === 'daily').map(d => ({
-      매체: d.platform,
-      일자: d.date || '-',
-      캠페인명: d.campaignName,
-      광고비: d.cost,
-      노출수: d.impressions,
-      클릭수: d.clicks,
-      전환수: d.conversions,
-      ROAS: d.roas
-    }));
-    
-    const dailySheet = XLSX.utils.json_to_sheet(dailyData.length > 0 ? dailyData : [{ 매체: '-', 일자: '-', 캠페인명: '-', 광고비: 0, 노출수: 0, 클릭수: 0, 전환수: 0, ROAS: 0 }]);
-    if (wb.SheetNames.includes('매체별 일별')) wb.Sheets['매체별 일별'] = dailySheet;
-    else XLSX.utils.book_append_sheet(wb, dailySheet, '매체별 일별');
+    const getWorksheetRobust = (nameStr: string) => {
+      let foundSheet: ExcelJS.Worksheet | undefined;
+      workbook.worksheets.forEach(ws => {
+        const normalizedWsName = ws.name.replace(/\s+/g, '');
+        if (normalizedWsName.includes(nameStr)) {
+          foundSheet = ws;
+        }
+      });
+      return foundSheet;
+    };
 
-    // 4. [키워드 성과] 시트
-    const keywordData = parsedData.filter(d => d.dataType === 'keyword').map(d => ({
-      매체: d.platform,
-      키워드: d.keyword,
-      노출수: d.impressions,
-      클릭수: d.clicks,
-      광고비: d.cost,
-      전환수: d.conversions,
-    }));
-    
-    const keywordSheet = XLSX.utils.json_to_sheet(keywordData.length > 0 ? keywordData : [{ 매체: '-', 키워드: '-', 노출수: 0, 클릭수: 0, 광고비: 0, 전환수: 0 }]);
-    if (wb.SheetNames.includes('키워드 성과')) wb.Sheets['키워드 성과'] = keywordSheet;
-    else XLSX.utils.book_append_sheet(wb, keywordSheet, '키워드 성과');
+    // -- 1. 네이버 일별 처리 --
+    const naverDaily = parsedData.filter(d => d.platform === 'naver' && d.dataType === 'daily');
+    const dailyGrouped: Record<string, Record<number, any>> = {
+      '파워링크': {},
+      '쇼핑검색': {}
+    };
 
-    XLSX.writeFile(wb, '광고성과_통합보고서.xlsx');
+    naverDaily.forEach(d => {
+      // 캠페인유형이 빈칸이면 캠페인명에서 유추
+      const typeStr = (d.campaignType && d.campaignType !== '-') ? d.campaignType : (d.campaignName || '');
+      const type = typeStr.includes('쇼핑') ? '쇼핑검색' : '파워링크';
+      const day = extractDay(d.date);
+      
+      if (day !== null) {
+        if (!dailyGrouped[type][day]) {
+          dailyGrouped[type][day] = { impressions: 0, clicks: 0, cost: 0, conversions: 0, conversionRevenue: 0 };
+        }
+        dailyGrouped[type][day].impressions += (d.impressions || 0);
+        dailyGrouped[type][day].clicks += (d.clicks || 0);
+        dailyGrouped[type][day].cost += (d.cost || 0);
+        dailyGrouped[type][day].conversions += (d.conversions || 0);
+        dailyGrouped[type][day].conversionRevenue += (d.conversionRevenue || 0);
+      }
+    });
+
+    const writeCell = (ws: ExcelJS.Worksheet, rowIndex: number, colIndex: number, value: any) => {
+      const cell = ws.getCell(rowIndex, colIndex);
+      cell.value = value;
+    };
+
+    // 파워링크 기입
+    const powerlinkSheet = getWorksheetRobust('파워링크_일일');
+    if (powerlinkSheet) {
+      Object.entries(dailyGrouped['파워링크']).forEach(([dayStr, data]) => {
+        const day = parseInt(dayStr, 10);
+        const rowIndex = 20 + day; // 1일 -> 21행
+        if (day >= 1 && day <= 31) {
+          writeCell(powerlinkSheet, rowIndex, 4, data.impressions); // D (4)
+          writeCell(powerlinkSheet, rowIndex, 5, data.clicks);      // E (5)
+          writeCell(powerlinkSheet, rowIndex, 8, data.cost);        // H (8)
+          writeCell(powerlinkSheet, rowIndex, 9, data.conversions); // I (9)
+          writeCell(powerlinkSheet, rowIndex, 12, data.conversionRevenue); // L (12)
+        }
+      });
+    }
+
+    // 쇼핑검색 기입
+    const shoppingDailySheet = getWorksheetRobust('네이버쇼핑_일일');
+    if (shoppingDailySheet) {
+      Object.entries(dailyGrouped['쇼핑검색']).forEach(([dayStr, data]) => {
+        const day = parseInt(dayStr, 10);
+        const rowIndex = 20 + day; // 1일 -> 21행
+        if (day >= 1 && day <= 31) {
+          writeCell(shoppingDailySheet, rowIndex, 4, data.impressions); // D
+          writeCell(shoppingDailySheet, rowIndex, 5, data.clicks);      // E
+          writeCell(shoppingDailySheet, rowIndex, 8, data.cost);        // H
+          writeCell(shoppingDailySheet, rowIndex, 9, data.conversions); // I
+          writeCell(shoppingDailySheet, rowIndex, 12, data.conversionRevenue); // L
+        }
+      });
+    }
+
+    // -- 2. 네이버 키워드 처리 --
+    const keywordSheet = getWorksheetRobust('네이버쇼핑_누적');
+    if (keywordSheet) {
+      const naverKeyword = parsedData.filter(d => {
+        if (d.platform !== 'naver' || d.dataType !== 'keyword') return false;
+        const typeStr = (d.campaignType && d.campaignType !== '-') ? d.campaignType : (d.campaignName || '');
+        return typeStr.includes('쇼핑');
+      });
+
+      // 정렬: 1순위 총비용 내림차순, 2순위 전환수 내림차순
+      naverKeyword.sort((a, b) => {
+        if ((b.cost || 0) !== (a.cost || 0)) return (b.cost || 0) - (a.cost || 0);
+        return (b.conversions || 0) - (a.conversions || 0);
+      });
+
+      // 24행부터 작성
+      let currentRow = 24;
+      naverKeyword.forEach(d => {
+        writeCell(keywordSheet, currentRow, 3, d.keyword || '-'); // C (3)
+        writeCell(keywordSheet, currentRow, 4, d.impressions || 0); // D (4)
+        writeCell(keywordSheet, currentRow, 5, d.clicks || 0);      // E (5)
+        writeCell(keywordSheet, currentRow, 8, d.cost || 0);        // H (8)
+        writeCell(keywordSheet, currentRow, 9, d.conversions || 0); // I (9)
+        writeCell(keywordSheet, currentRow, 12, d.conversionRevenue || 0); // L (12)
+        currentRow++;
+      });
+    }
+
+    // 파일 저장
+    const dateObj = new Date();
+    const yy = String(dateObj.getFullYear()).slice(-2);
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    const fileName = `${yy}${mm}${dd}_라르츠 거리측정기_보고서(네이버 쿠팡).xlsx`;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), fileName);
   };
 
   const hasFilesToProcess = Object.values(files).some(fileArr => fileArr.length > 0);
