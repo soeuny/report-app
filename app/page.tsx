@@ -239,10 +239,10 @@ export default function DashboardPage() {
         return typeStr.includes('쇼핑');
       });
 
-      // 정렬: 1순위 총비용 내림차순, 2순위 전환수 내림차순
+      // 정렬: 1순위 전환수 내림차순, 2순위 총비용 내림차순
       naverKeyword.sort((a, b) => {
-        if ((b.cost || 0) !== (a.cost || 0)) return (b.cost || 0) - (a.cost || 0);
-        return (b.conversions || 0) - (a.conversions || 0);
+        if ((b.conversions || 0) !== (a.conversions || 0)) return (b.conversions || 0) - (a.conversions || 0);
+        return (b.cost || 0) - (a.cost || 0);
       });
 
       // 24행부터 작성
