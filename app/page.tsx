@@ -248,14 +248,16 @@ export default function DashboardPage() {
       // 24행부터 작성
       let currentRow = 24;
       naverKeyword.forEach(d => {
-        writeCell(keywordSheet, currentRow, 3, d.keyword || '-'); // C (3)
-        writeCell(keywordSheet, currentRow, 4, d.impressions || 0); // D (4)
-        writeCell(keywordSheet, currentRow, 5, d.clicks || 0);      // E (5)
-        writeCell(keywordSheet, currentRow, 8, d.cost || 0);        // H (8)
-        writeCell(keywordSheet, currentRow, 9, d.conversions || 0); // I (9)
-        writeCell(keywordSheet, currentRow, 12, d.conversionRevenue || 0); // L (12)
+        // C(3): 키워드, D(4): 노출수, E(5): 클릭수, H(8): 광고비, I(9): 전환수, L(12): 전환매출액
+        writeCell(keywordSheet, currentRow, 3, d.keyword || '-');
+        writeCell(keywordSheet, currentRow, 4, d.impressions || 0);
+        writeCell(keywordSheet, currentRow, 5, d.clicks || 0);
+        writeCell(keywordSheet, currentRow, 8, d.cost || 0);
+        writeCell(keywordSheet, currentRow, 9, d.conversions || 0);
+        writeCell(keywordSheet, currentRow, 12, d.conversionRevenue || 0);
         currentRow++;
       });
+      console.log(`네이버쇼핑_누적 시트 업데이트 완료: ${naverKeyword.length}행 입력됨`);
     }
 
     // 파일 저장

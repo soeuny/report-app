@@ -28,10 +28,10 @@ const COMMON_MAPPINGS = {
   impressions: ['노출', 'impression'],
   clicks: ['클릭', 'click'],
   cost: ['비용', '광고비', '지출액', '총비용', '소진', 'cost'],
-  conversions: ['전환', '결제수', '구매수', '구매건수', 'conversion'],
+  conversions: ['구매완료전환수', '전환', '결제수', '구매수', '구매건수', 'conversion'],
   roas: ['roas', '수익률'],
   campaignType: ['캠페인유형', 'campaigntype', '유형'],
-  conversionRevenue: ['전환매출', '전환매출액', '매출액', 'revenue', '구매완료전환매출액', '구매완료전환매출액(원)'],
+  conversionRevenue: ['구매완료전환매출액(원)', '구매완료전환매출액', '전환매출', '전환매출액', '매출액', 'revenue'],
 };
 
 /**
@@ -41,15 +41,21 @@ function findStandardKey(rawHeader: string): string | null {
   if (!rawHeader || typeof rawHeader !== 'string') return null;
   const normalizedHeader = rawHeader.replace(/\s+/g, '').toLowerCase();
   
+  let bestMatch: { key: string; length: number } | null = null;
+
   for (const [standardKey, possibleNames] of Object.entries(COMMON_MAPPINGS)) {
     for (const name of possibleNames) {
       const normalizedName = name.replace(/\s+/g, '').toLowerCase();
+      // "전환"이 "전환매출액"에 포함되는 문제를 방지하기 위해 
+      // 더 긴(상세한) 키워드가 매칭되면 그것을 우선함
       if (normalizedHeader.includes(normalizedName)) {
-        return standardKey;
+        if (!bestMatch || normalizedName.length > bestMatch.length) {
+          bestMatch = { key: standardKey, length: normalizedName.length };
+        }
       }
     }
   }
-  return null;
+  return bestMatch ? bestMatch.key : null;
 }
 
 /**
@@ -137,6 +143,12 @@ export function normalizeData(rawData: any[][], platform: string, dataType: 'dai
         mappedRow[standardKey as keyof StandardAdData] = (value !== undefined && value !== null) ? String(value) : '-' as never;
       }
     });
+
+    // [네이버 키워드] 특수 규칙: 사용자 요청에 따라 F열(5)과 G열(6)을 각각 전환수와 전환매출액으로 강제 매핑
+    if (platform === 'naver' && dataType === 'keyword') {
+      if (row[5] !== undefined) mappedRow.conversions = parseNumber(row[5]);
+      if (row[6] !== undefined) mappedRow.conversionRevenue = parseNumber(row[6]);
+    }
 
     // 노출수나 클릭수 등 핵심 지표가 아예 없으면 유효하지 않은 데이터로 간주하고 무시 (합계(총계) 행 등 제외용)
     if (mappedRow.impressions === undefined && mappedRow.clicks === undefined && mappedRow.cost === undefined) {
