@@ -79,10 +79,11 @@ export default function DashboardPage() {
       reader.onload = (e) => {
         try {
           const data = e.target?.result;
-          const workbook = XLSX.read(data, { type: 'binary' });
+          const workbook = XLSX.read(data, { type: 'binary', cellDates: false });
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
-          const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false }) as any[][];
+          // raw: true → 숫자/날짜 원본값 유지, dateNF 미적용
+          const json = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: true, dateNF: 'yyyy-mm-dd' }) as any[][];
           resolve(json);
         } catch (error) {
           reject(error);
@@ -115,7 +116,7 @@ export default function DashboardPage() {
         const zoneFiles = files[zoneConfig.key];
         for (const file of zoneFiles) {
           const rawData = await readExcel(file);
-          const standardized = normalizeData(rawData, zoneConfig.platform, zoneConfig.type);
+          const standardized = normalizeData(rawData, zoneConfig.platform, zoneConfig.type, zoneConfig.key);
           allData = [...allData, ...standardized];
         }
       }
@@ -198,36 +199,126 @@ export default function DashboardPage() {
       cell.value = value;
     };
 
-    // 파워링크 기입
-    const powerlinkSheet = getWorksheetRobust('파워링크_일일');
+    // 1-1. 파워링크 일일 기입
+    const powerlinkSheet = getWorksheetRobust('네이버파워링크_일일');
     if (powerlinkSheet) {
-      Object.entries(dailyGrouped['파워링크']).forEach(([dayStr, data]) => {
-        const day = parseInt(dayStr, 10);
-        const rowIndex = 20 + day; // 1일 -> 21행
-        if (day >= 1 && day <= 31) {
-          writeCell(powerlinkSheet, rowIndex, 4, data.impressions); // D (4)
-          writeCell(powerlinkSheet, rowIndex, 5, data.clicks);      // E (5)
-          writeCell(powerlinkSheet, rowIndex, 8, data.cost);        // H (8)
-          writeCell(powerlinkSheet, rowIndex, 9, data.conversions); // I (9)
-          writeCell(powerlinkSheet, rowIndex, 12, data.conversionRevenue); // L (12)
+      // 디버그: 전체 naver daily 데이터 확인
+      const allNaverDaily = parsedData.filter(d => d.platform === 'naver' && d.dataType === 'daily');
+      console.log('[파워링크] 전체 네이버 일별 데이터:', allNaverDaily.length, '건');
+      console.log('[파워링크] campaignType 목록:', [...new Set(allNaverDaily.map(d => d.campaignType))]);
+      console.log('[파워링크] sourceZone 목록:', [...new Set(allNaverDaily.map(d => d.sourceZone))]);
+      console.log('[파워링크] 샘플 date 형식:', allNaverDaily.slice(0, 3).map(d => d.date));
+
+      const naverPowerlinkDaily = parsedData.filter(d => {
+        if (d.platform !== 'naver' || d.dataType !== 'daily') return false;
+        
+        // 사용자의 요청: 캠페인유형 컬럼의 '파워링크' 항목만 가져옴
+        if (d.campaignType?.includes('파워링크')) return true;
+        
+        // naver_daily 존에서 업로드되었고, 쇼핑이 아닌 경우 파워링크로 간주 (백업 로직)
+        if (d.sourceZone === 'naver_daily') {
+          const isShopping = d.campaignType?.includes('쇼핑') || d.campaignName?.includes('쇼핑');
+          return !isShopping;
         }
+        
+        return false;
       });
+
+      console.log('[파워링크] 필터 후 데이터:', naverPowerlinkDaily.length, '건');
+
+      const powerlinkDateMap: Record<string, any> = {};
+      naverPowerlinkDaily.forEach(d => {
+        if (!powerlinkDateMap[d.date]) {
+          powerlinkDateMap[d.date] = { impressions: 0, clicks: 0, cost: 0, conversions: 0, conversionRevenue: 0 };
+        }
+        powerlinkDateMap[d.date].impressions += (d.impressions || 0);
+        powerlinkDateMap[d.date].clicks += (d.clicks || 0);
+        powerlinkDateMap[d.date].cost += (d.cost || 0);
+        powerlinkDateMap[d.date].conversions += (d.conversions || 0);
+        powerlinkDateMap[d.date].conversionRevenue += (d.conversionRevenue || 0);
+      });
+
+      console.log('[파워링크] 날짜맵 키:', Object.keys(powerlinkDateMap));
+
+      // B21부터 B51까지 순회하며 날짜 매칭
+      let matchCount = 0;
+      for (let rowIdx = 21; rowIdx <= 51; rowIdx++) {
+        const dateCell = powerlinkSheet.getCell(rowIdx, 2);
+        if (dateCell.value) {
+          let targetDate = "";
+          if (dateCell.value instanceof Date) {
+            const d = dateCell.value;
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else if (typeof dateCell.value === 'number') {
+            // ExcelJS가 날짜를 시리얼 넘버로 반환하는 경우
+            const excelEpoch = new Date(1899, 11, 30);
+            const d = new Date(excelEpoch.getTime() + dateCell.value * 86400000);
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else {
+            const parts = String(dateCell.value).split(/[^0-9]+/).filter(p => p.length > 0);
+            if (parts.length >= 3) targetDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          }
+
+          if (rowIdx <= 23) {
+            console.log(`[파워링크] B${rowIdx} 셀값:`, dateCell.value, `(타입: ${typeof dateCell.value})`, '→ 변환:', targetDate, '매칭:', !!powerlinkDateMap[targetDate]);
+          }
+
+          if (targetDate && powerlinkDateMap[targetDate]) {
+            const data = powerlinkDateMap[targetDate];
+            writeCell(powerlinkSheet, rowIdx, 4, data.impressions);
+            writeCell(powerlinkSheet, rowIdx, 5, data.clicks);
+            writeCell(powerlinkSheet, rowIdx, 8, data.cost);
+            writeCell(powerlinkSheet, rowIdx, 9, data.conversions);
+            writeCell(powerlinkSheet, rowIdx, 12, data.conversionRevenue);
+            matchCount++;
+          }
+        }
+      }
+      console.log(`[파워링크] 총 ${matchCount}건 매칭 완료`);
     }
 
-    // 쇼핑검색 기입
+    // 1-2. 쇼핑검색 일일 기입
     const shoppingDailySheet = getWorksheetRobust('네이버쇼핑_일일');
     if (shoppingDailySheet) {
-      Object.entries(dailyGrouped['쇼핑검색']).forEach(([dayStr, data]) => {
-        const day = parseInt(dayStr, 10);
-        const rowIndex = 20 + day; // 1일 -> 21행
-        if (day >= 1 && day <= 31) {
-          writeCell(shoppingDailySheet, rowIndex, 4, data.impressions); // D
-          writeCell(shoppingDailySheet, rowIndex, 5, data.clicks);      // E
-          writeCell(shoppingDailySheet, rowIndex, 8, data.cost);        // H
-          writeCell(shoppingDailySheet, rowIndex, 9, data.conversions); // I
-          writeCell(shoppingDailySheet, rowIndex, 12, data.conversionRevenue); // L
+      const naverShoppingDaily = parsedData.filter(d => 
+        d.platform === 'naver' && 
+        d.dataType === 'daily' && 
+        (d.sourceZone === 'naver_daily' && (d.campaignType?.includes('쇼핑') || d.campaignName?.includes('쇼핑')))
+      );
+
+      const shoppingDateMap: Record<string, any> = {};
+      naverShoppingDaily.forEach(d => {
+        if (!shoppingDateMap[d.date]) {
+          shoppingDateMap[d.date] = { impressions: 0, clicks: 0, cost: 0, conversions: 0, conversionRevenue: 0 };
         }
+        shoppingDateMap[d.date].impressions += (d.impressions || 0);
+        shoppingDateMap[d.date].clicks += (d.clicks || 0);
+        shoppingDateMap[d.date].cost += (d.cost || 0);
+        shoppingDateMap[d.date].conversions += (d.conversions || 0);
+        shoppingDateMap[d.date].conversionRevenue += (d.conversionRevenue || 0);
       });
+
+      for (let rowIdx = 21; rowIdx <= 51; rowIdx++) {
+        const dateCell = shoppingDailySheet.getCell(rowIdx, 2);
+        if (dateCell.value) {
+          let targetDate = "";
+          if (dateCell.value instanceof Date) {
+            const d = dateCell.value;
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else {
+            const parts = String(dateCell.value).split(/[^0-9]+/).filter(p => p.length > 0);
+            if (parts.length >= 3) targetDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          }
+          if (targetDate && shoppingDateMap[targetDate]) {
+            const data = shoppingDateMap[targetDate];
+            writeCell(shoppingDailySheet, rowIdx, 4, data.impressions);
+            writeCell(shoppingDailySheet, rowIdx, 5, data.clicks);
+            writeCell(shoppingDailySheet, rowIdx, 8, data.cost);
+            writeCell(shoppingDailySheet, rowIdx, 9, data.conversions);
+            writeCell(shoppingDailySheet, rowIdx, 12, data.conversionRevenue);
+          }
+        }
+      }
     }
 
     // -- 2. 네이버 키워드 처리 --
@@ -235,6 +326,8 @@ export default function DashboardPage() {
     if (keywordSheet) {
       const naverKeyword = parsedData.filter(d => {
         if (d.platform !== 'naver' || d.dataType !== 'keyword') return false;
+        // naver_keyword 존에서 업로드된 파일이라면 기본적으로 포함
+        if (d.sourceZone === 'naver_keyword') return true;
         const typeStr = (d.campaignType && d.campaignType !== '-') ? d.campaignType : (d.campaignName || '');
         return typeStr.includes('쇼핑');
       });
@@ -308,7 +401,7 @@ export default function DashboardPage() {
           >
             <input 
               type="file" 
-              ref={el => fileInputRefs.current[zone.key] = el}
+              ref={el => { fileInputRefs.current[zone.key] = el; }}
               onChange={(e) => handleFileChange(e, zone.key)} 
               className="hidden" 
               multiple 

@@ -17,6 +17,7 @@ export interface StandardAdData {
   roas: number; // 광고수익률 (%)
   campaignType?: string; // 캠페인유형 (파워링크, 쇼핑검색 등)
   conversionRevenue?: number; // 구매완료 전환매출액(원)
+  sourceZone?: string; // 데이터 소스 존 (naver_daily 등)
 }
 
 // 공통 컬럼 매핑 사전 (매체 구분 없이 유연하게 탐색)
@@ -24,7 +25,7 @@ const COMMON_MAPPINGS = {
   campaignName: ['캠페인', 'campaign'],
   adGroupName: ['광고그룹', '그룹명', 'adgroup'],
   keyword: ['키워드', 'keyword', '검색어', '확장검색어'],
-  date: ['날짜', '일자', '기간', 'date'],
+  date: ['날짜', '일자', '일별', '기간', 'date'],
   impressions: ['노출', 'impression'],
   clicks: ['클릭', 'click'],
   cost: ['비용', '광고비', '지출액', '총비용', '소진', 'cost'],
@@ -71,10 +72,50 @@ function parseNumber(value: any): number {
 }
 
 /**
+ * 날짜 형식을 YYYY-MM-DD로 정규화합니다.
+ * '2026.05.01.' -> '2026-05-01'
+ * 엑셀 시리얼 넘버(예: 46143)도 지원합니다.
+ */
+function normalizeDateStr(value: any): string {
+  if (value === null || value === undefined || value === '' || value === '-') return '-';
+
+  // 1) 엑셀 시리얼 넘버 (숫자인 경우)
+  if (typeof value === 'number') {
+    const excelEpoch = new Date(1899, 11, 30);
+    const d = new Date(excelEpoch.getTime() + value * 86400000);
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+    return '-';
+  }
+
+  // 2) Date 객체인 경우
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+
+  // 3) 문자열인 경우: 숫자만 추출 (e.g. "2026.05.01." -> ["2026", "05", "01"])
+  const dateStr = String(value);
+  const parts = dateStr.split(/[^0-9]+/).filter(p => p.length > 0);
+  
+  if (parts.length >= 3) {
+    const yyyy = parts[0];
+    const mm = parts[1].padStart(2, '0');
+    const dd = parts[2].padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  
+  return dateStr;
+}
+
+/**
  * 엑셀 2차원 배열 데이터를 표준 포맷(StandardAdData)으로 파싱합니다.
  * @param rawData XLSX.utils.sheet_to_json(ws, { header: 1 }) 결과값
+ * @param platform 매체명
+ * @param dataType 데이터 종류
+ * @param zone 데이터 소스 존
  */
-export function normalizeData(rawData: any[][], platform: string, dataType: 'daily' | 'keyword'): StandardAdData[] {
+export function normalizeData(rawData: any[][], platform: string, dataType: 'daily' | 'keyword', zone?: string): StandardAdData[] {
   if (!rawData || !Array.isArray(rawData) || rawData.length === 0) return [];
 
   // 1. 헤더 행(Row) 찾기
@@ -128,6 +169,7 @@ export function normalizeData(rawData: any[][], platform: string, dataType: 'dai
       id: `${platform}-${i}-${Date.now()}`,
       platform: platform,
       dataType: dataType,
+      sourceZone: zone,
     };
 
     // 추출된 헤더 맵을 기반으로 열 값 매핑
@@ -139,6 +181,8 @@ export function normalizeData(rawData: any[][], platform: string, dataType: 'dai
         mappedRow[standardKey as keyof StandardAdData] = parseNumber(value) as never;
       } else if (standardKey === 'roas') {
         mappedRow[standardKey as keyof StandardAdData] = parseNumber(value) as never;
+      } else if (standardKey === 'date') {
+        mappedRow.date = normalizeDateStr(value);
       } else {
         mappedRow[standardKey as keyof StandardAdData] = (value !== undefined && value !== null) ? String(value) : '-' as never;
       }
