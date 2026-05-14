@@ -190,6 +190,11 @@ export function normalizeData(rawData: any[][], platform: string, dataType: 'dai
 
     // [네이버 키워드] 특수 규칙: 사용자 요청에 따라 F열(5)과 G열(6)을 각각 전환수와 전환매출액으로 강제 매핑
     if (platform === 'naver' && dataType === 'keyword') {
+      const type = String(row[0] || '').trim();
+      // 유저 요청: A열이 정확히 "쇼핑검색"인 행만 추출
+      if (type !== '쇼핑검색') continue;
+
+      mappedRow.campaignType = type;
       if (row[5] !== undefined) mappedRow.conversions = parseNumber(row[5]);
       if (row[6] !== undefined) mappedRow.conversionRevenue = parseNumber(row[6]);
     }

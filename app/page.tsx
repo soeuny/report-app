@@ -324,13 +324,11 @@ export default function DashboardPage() {
     // -- 2. 네이버 키워드 처리 --
     const keywordSheet = getWorksheetRobust('네이버쇼핑_누적');
     if (keywordSheet) {
-      const naverKeyword = parsedData.filter(d => {
-        if (d.platform !== 'naver' || d.dataType !== 'keyword') return false;
-        // naver_keyword 존에서 업로드된 파일이라면 기본적으로 포함
-        if (d.sourceZone === 'naver_keyword') return true;
-        const typeStr = (d.campaignType && d.campaignType !== '-') ? d.campaignType : (d.campaignName || '');
-        return typeStr.includes('쇼핑');
-      });
+      const naverKeyword = parsedData.filter(d => 
+        d.platform === 'naver' && 
+        d.dataType === 'keyword' && 
+        d.campaignType === '쇼핑검색'
+      );
 
       // 정렬: 1순위 전환수 내림차순, 2순위 총비용 내림차순
       naverKeyword.sort((a, b) => {
