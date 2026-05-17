@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { UploadCloud, FileSpreadsheet, Download, DollarSign, TrendingUp, MousePointerClick, Activity, Play, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as XLSX from 'xlsx';
@@ -36,16 +36,161 @@ export default function DashboardPage() {
     naver_daily: null, naver_keyword: null, gfa_daily: null, coupang_daily: null, coupang_keyword: null, report_form: null
   });
 
-  // Summary Metrics
-  const totalCost = parsedData.reduce((acc, curr) => acc + (curr.cost || 0), 0);
-  const totalConversions = parsedData.reduce((acc, curr) => acc + (curr.conversions || 0), 0);
-  const totalClicks = parsedData.reduce((acc, curr) => acc + (curr.clicks || 0), 0);
-  const totalImpressions = parsedData.reduce((acc, curr) => acc + (curr.impressions || 0), 0);
-  
-  const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
-  const avgRoas = parsedData.length > 0 
-    ? parsedData.reduce((acc, curr) => acc + (curr.roas || 0), 0) / parsedData.filter(d => d.roas).length || 0 
-    : 0;
+  const [activeView, setActiveView] = useState<'dashboard' | 'summary'>('dashboard');
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash === '#summary') {
+        setActiveView('summary');
+      } else {
+        setActiveView('dashboard');
+      }
+    };
+    handleHashChange();
+    
+    window.addEventListener('hashchange', handleHashChange);
+    const interval = setInterval(handleHashChange, 100);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  // 1. 초기 마운트 시 세션 스토리지에서 복구
+  useEffect(() => {
+    try {
+      const cachedData = sessionStorage.getItem('larzx_parsed_data');
+      if (cachedData) {
+        const parsed = JSON.parse(cachedData);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setParsedData(parsed);
+        }
+      }
+
+      const cachedFiles = sessionStorage.getItem('larzx_file_metadata');
+      if (cachedFiles) {
+        const metadata = JSON.parse(cachedFiles);
+        const restoredFiles: Record<ZoneKey, File[]> = {
+          naver_daily: [], naver_keyword: [], gfa_daily: [], coupang_daily: [], coupang_keyword: [], report_form: []
+        };
+        (Object.keys(metadata) as ZoneKey[]).forEach(key => {
+          restoredFiles[key] = (metadata[key] || []).map((f: { name: string; size: number }) => {
+            const mock = new File([], f.name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            Object.defineProperty(mock, 'size', { value: f.size });
+            (mock as any).isRestored = true;
+            return mock;
+          });
+        });
+        setFiles(restoredFiles);
+      }
+      
+      const cachedReportForm = sessionStorage.getItem('larzx_report_form_metadata');
+      if (cachedReportForm) {
+        const f = JSON.parse(cachedReportForm);
+        const mock = new File([], f.name, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        Object.defineProperty(mock, 'size', { value: f.size });
+        (mock as any).isRestored = true;
+        setReportFormFiles([mock]);
+      }
+    } catch (e) {
+      console.error('세션 복구 실패:', e);
+    }
+  }, []);
+
+  // 2. files 변경 시 세션 스토리지 동기화
+  useEffect(() => {
+    try {
+      const metadata: Record<ZoneKey, { name: string; size: number }[]> = {} as any;
+      (Object.keys(files) as ZoneKey[]).forEach(key => {
+        metadata[key] = files[key].map(f => ({ name: f.name, size: f.size }));
+      });
+      sessionStorage.setItem('larzx_file_metadata', JSON.stringify(metadata));
+    } catch (e) {
+      console.error('세션 파일 저장 실패:', e);
+    }
+  }, [files]);
+
+  // 3. reportFormFiles 변경 시 세션 스토리지 동기화
+  useEffect(() => {
+    try {
+      if (reportFormFiles.length > 0) {
+        const f = reportFormFiles[0];
+        sessionStorage.setItem('larzx_report_form_metadata', JSON.stringify({ name: f.name, size: f.size }));
+      } else {
+        sessionStorage.removeItem('larzx_report_form_metadata');
+      }
+    } catch (e) {
+      console.error('세션 폼 파일 저장 실패:', e);
+    }
+  }, [reportFormFiles]);
+
+  // 4. parsedData 변경 시 세션 스토리지 동기화
+  useEffect(() => {
+    try {
+      if (parsedData.length > 0) {
+        sessionStorage.setItem('larzx_parsed_data', JSON.stringify(parsedData));
+      } else {
+        sessionStorage.removeItem('larzx_parsed_data');
+      }
+    } catch (e) {
+      console.error('세션 데이터 저장 실패:', e);
+    }
+  }, [parsedData]);
+
+  // 네이버 일별 필터링
+  const naverDaily = parsedData.filter(d => d.platform === 'naver' && d.dataType === 'daily');
+  // 네이버 파워링크 일일 필터
+  const naverPowerlink = naverDaily.filter(d => {
+    if (d.campaignType?.includes('파워링크')) return true;
+    if (d.sourceZone === 'naver_daily') {
+      const isShopping = d.campaignType?.includes('쇼핑') || d.campaignName?.includes('쇼핑');
+      return !isShopping;
+    }
+    return false;
+  });
+
+  // 네이버 쇼핑 일일 필터
+  const naverShopping = naverDaily.filter(d => 
+    (d.sourceZone === 'naver_daily' && (d.campaignType?.includes('쇼핑') || d.campaignName?.includes('쇼핑')))
+  );
+
+  // GFA 일일 필터
+  const gfaDaily = parsedData.filter(d => d.platform === 'gfa' && d.dataType === 'daily');
+
+  // 쿠팡 일일 필터
+  const coupangDaily = parsedData.filter(d => d.platform === 'coupang' && d.dataType === 'daily');
+
+  // 1. 총 광고비: '요약' 시트 G18셀 데이터 매칭 (쿠팡은 부가세 1.1 가산 후 반올림한 금액 적용)
+  const powerlinkCost = naverPowerlink.reduce((sum, d) => sum + (d.cost || 0), 0);
+  const shoppingCost = naverShopping.reduce((sum, d) => sum + (d.cost || 0), 0);
+  const gfaCost = gfaDaily.reduce((sum, d) => sum + (d.cost || 0), 0);
+
+  // 쿠팡 비용 (일자별로 선합산 후 1.1 및 반올림 처리)
+  const coupangCostMap: Record<string, number> = {};
+  coupangDaily.forEach(d => {
+    coupangCostMap[d.date] = (coupangCostMap[d.date] || 0) + (d.cost || 0);
+  });
+  const coupangCost = Object.values(coupangCostMap).reduce((sum, cost) => sum + Math.round(cost * 1.1), 0);
+
+  const displayTotalCost = powerlinkCost + shoppingCost + gfaCost + coupangCost;
+
+  // 2. 총 전환수: '요약' 시트 H18셀 데이터 매칭
+  const displayTotalConversions = 
+    naverPowerlink.reduce((sum, d) => sum + (d.conversions || 0), 0) +
+    naverShopping.reduce((sum, d) => sum + (d.conversions || 0), 0) +
+    gfaDaily.reduce((sum, d) => sum + (d.conversions || 0), 0) +
+    coupangDaily.reduce((sum, d) => sum + (d.conversions || 0), 0);
+
+  // 3. 총 전환매출: '요약' 시트 K18셀 데이터 매칭
+  const displayTotalConversionRevenue = 
+    naverPowerlink.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0) +
+    naverShopping.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0) +
+    gfaDaily.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0) +
+    coupangDaily.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0);
+
+  // 4. ROAS: '요약' 시트 M18셀 데이터 매칭 (전환매출 / 광고비 * 100)
+  const displayRoas = displayTotalCost > 0 ? (displayTotalConversionRevenue / displayTotalCost) * 100 : 0;
 
   const handleDrop = (e: React.DragEvent, zone: ZoneKey) => {
     e.preventDefault();
@@ -95,6 +240,16 @@ export default function DashboardPage() {
   };
 
   const handleAnalyze = async () => {
+    // 복구된 가상 파일이 포함되어 있는지 검사
+    const hasRestoredMock = Object.values(files).some(fileArr => fileArr.some((f: any) => f.isRestored));
+    if (hasRestoredMock && parsedData.length > 0) {
+      const hasRealNewFile = Object.values(files).some(fileArr => fileArr.some((f: any) => !f.isRestored));
+      if (!hasRealNewFile) {
+        alert("이미 이전 세션의 분석 결과가 복구되어 완벽하게 유지 중입니다! 기존 결과를 그대로 사용하거나, 새로운 분석을 실행하려면 파일을 제거한 후 실제 파일을 새로 업로드해 주세요.");
+        return;
+      }
+    }
+
     setIsAnalyzing(true);
     let allData: StandardAdData[] = [];
     
@@ -137,6 +292,11 @@ export default function DashboardPage() {
     }
 
     const file = reportFormFiles[0];
+    if ((file as any).isRestored) {
+      alert("페이지가 새로고침되어 '보고서 폼'의 실제 바이너리 파일 내용이 소실되었습니다. 번거로우시겠지만, '보고서 폼' 영역에 양식 파일을 다시 업로드(드래그)한 뒤 다운로드 버튼을 눌러주세요!");
+      return;
+    }
+
     const workbook = new ExcelJS.Workbook();
     
     try {
@@ -603,6 +763,169 @@ export default function DashboardPage() {
     saveAs(new Blob([buffer]), fileName);
   };
 
+  // 네이버 파워링크 합계
+  const powerlinkImpressions = naverPowerlink.reduce((sum, d) => sum + (d.impressions || 0), 0);
+  const powerlinkClicks = naverPowerlink.reduce((sum, d) => sum + (d.clicks || 0), 0);
+  const powerlinkCtr = powerlinkImpressions > 0 ? (powerlinkClicks / powerlinkImpressions) * 100 : 0;
+  const powerlinkCostSum = naverPowerlink.reduce((sum, d) => sum + (d.cost || 0), 0);
+  const powerlinkConversions = naverPowerlink.reduce((sum, d) => sum + (d.conversions || 0), 0);
+  const powerlinkRevenue = naverPowerlink.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0);
+  const powerlinkRoas = powerlinkCostSum > 0 ? (powerlinkRevenue / powerlinkCostSum) * 100 : 0;
+
+  // 네이버 쇼핑 합계
+  const shoppingImpressions = naverShopping.reduce((sum, d) => sum + (d.impressions || 0), 0);
+  const shoppingClicks = naverShopping.reduce((sum, d) => sum + (d.clicks || 0), 0);
+  const shoppingCtr = shoppingImpressions > 0 ? (shoppingClicks / shoppingImpressions) * 100 : 0;
+  const shoppingCostSum = naverShopping.reduce((sum, d) => sum + (d.cost || 0), 0);
+  const shoppingConversions = naverShopping.reduce((sum, d) => sum + (d.conversions || 0), 0);
+  const shoppingRevenue = naverShopping.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0);
+  const shoppingRoas = shoppingCostSum > 0 ? (shoppingRevenue / shoppingCostSum) * 100 : 0;
+
+  // GFA 합계
+  const gfaImpressions = gfaDaily.reduce((sum, d) => sum + (d.impressions || 0), 0);
+  const gfaClicks = gfaDaily.reduce((sum, d) => sum + (d.clicks || 0), 0);
+  const gfaCtr = gfaImpressions > 0 ? (gfaClicks / gfaImpressions) * 100 : 0;
+  const gfaCostSum = gfaDaily.reduce((sum, d) => sum + (d.cost || 0), 0);
+  const gfaConversions = gfaDaily.reduce((sum, d) => sum + (d.conversions || 0), 0);
+  const gfaRevenue = gfaDaily.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0);
+  const gfaRoas = gfaCostSum > 0 ? (gfaRevenue / gfaCostSum) * 100 : 0;
+
+  // 쿠팡 합계
+  const coupangImpressions = coupangDaily.reduce((sum, d) => sum + (d.impressions || 0), 0);
+  const coupangClicks = coupangDaily.reduce((sum, d) => sum + (d.clicks || 0), 0);
+  const coupangCtr = coupangImpressions > 0 ? (coupangClicks / coupangImpressions) * 100 : 0;
+  const coupangConversions = coupangDaily.reduce((sum, d) => sum + (d.conversions || 0), 0);
+  const coupangRevenue = coupangDaily.reduce((sum, d) => sum + (d.conversionRevenue || 0), 0);
+  const coupangRoas = coupangCost > 0 ? (coupangRevenue / coupangCost) * 100 : 0;
+
+  if (activeView === 'summary') {
+    if (parsedData.length === 0) {
+      return (
+        <div className="flex flex-col items-center justify-center min-h-[50vh] text-center p-8 bg-card rounded-2xl border border-border shadow-sm">
+          <FileSpreadsheet className="w-16 h-16 text-muted-foreground/60 mb-4 animate-bounce" />
+          <h2 className="text-2xl font-bold text-foreground mb-2">분석된 데이터가 없습니다</h2>
+          <p className="text-muted-foreground max-w-md">
+            먼저 <span className="font-semibold text-primary">통합 대시보드</span>에서 광고 성과 데이터 파일과 <strong>[보고서 폼]</strong> 양식을 업로드하고 <strong>[데이터 분석 시작]</strong> 버튼을 눌러주세요.
+          </p>
+          <button 
+            onClick={() => { window.location.hash = ''; }}
+            className="mt-6 px-6 py-2.5 bg-primary text-primary-foreground font-bold rounded-lg shadow hover:bg-primary/90 transition-all"
+          >
+            통합 대시보드로 이동
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-8 pb-16">
+        {/* Sticky Header / KPI Card Section */}
+        <div className="sticky top-0 z-40 bg-background/95 backdrop-blur-md py-4 border-b border-border shadow-sm -mx-8 px-8 mb-6">
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-bold text-foreground">실시간 매체 요약 보고서</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">매월 1일부터 전일까지의 누적 엑셀 성과 지표(요약 시트 대조)</p>
+            </div>
+            {reportFormFiles.length > 0 && (
+              <button 
+                onClick={handleDownloadExcel}
+                className="flex items-center gap-2 px-4 py-2 bg-accent text-accent-foreground rounded-lg font-semibold shadow hover:bg-accent/90 transition-all text-sm mt-2 md:mt-0"
+              >
+                <Download className="w-4 h-4" />
+                엑셀 다운로드
+              </button>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-card rounded-xl p-4 shadow-sm border border-border flex items-center justify-between">
+              <div>
+                <span className="text-xs text-muted-foreground font-medium">총 광고비 (G18)</span>
+                <div className="text-xl font-extrabold text-foreground mt-1">{displayTotalCost.toLocaleString()} 원</div>
+              </div>
+              <div className="p-2.5 bg-primary/10 rounded-lg text-primary"><DollarSign className="w-5 h-5" /></div>
+            </div>
+
+            <div className="bg-card rounded-xl p-4 shadow-sm border border-border flex items-center justify-between">
+              <div>
+                <span className="text-xs text-muted-foreground font-medium">ROAS (M18)</span>
+                <div className="text-xl font-extrabold text-foreground mt-1">{displayRoas.toFixed(2)} %</div>
+              </div>
+              <div className="p-2.5 bg-accent/15 rounded-lg text-accent"><TrendingUp className="w-5 h-5" /></div>
+            </div>
+
+            <div className="bg-card rounded-xl p-4 shadow-sm border border-border flex items-center justify-between">
+              <div>
+                <span className="text-xs text-muted-foreground font-medium">총 전환수 (H18)</span>
+                <div className="text-xl font-extrabold text-foreground mt-1">{displayTotalConversions.toLocaleString()} 건</div>
+              </div>
+              <div className="p-2.5 bg-primary/10 rounded-lg text-primary"><Activity className="w-5 h-5" /></div>
+            </div>
+
+            <div className="bg-card rounded-xl p-4 shadow-sm border border-border flex items-center justify-between">
+              <div>
+                <span className="text-xs text-muted-foreground font-medium">총 전환매출 (K18)</span>
+                <div className="text-xl font-extrabold text-foreground mt-1">{displayTotalConversionRevenue.toLocaleString()} 원</div>
+              </div>
+              <div className="p-2.5 bg-accent/15 rounded-lg text-accent"><DollarSign className="w-5 h-5" /></div>
+            </div>
+          </div>
+        </div>
+
+        {/* 매체별 상세 데이터 테이블 */}
+        <div className="space-y-6">
+          <h3 className="text-xl font-bold text-foreground">매체별 일일 성과 요약</h3>
+          
+          <div className="grid grid-cols-1 gap-6">
+            {[
+              { name: '네이버 파워링크', imp: powerlinkImpressions, click: powerlinkClicks, ctr: powerlinkCtr, cost: powerlinkCostSum, conv: powerlinkConversions, rev: powerlinkRevenue, roas: powerlinkRoas, color: 'border-emerald-500 hover:border-emerald-600' },
+              { name: '네이버 쇼핑검색', imp: shoppingImpressions, click: shoppingClicks, ctr: shoppingCtr, cost: shoppingCostSum, conv: shoppingConversions, rev: shoppingRevenue, roas: shoppingRoas, color: 'border-emerald-600 hover:border-emerald-700' },
+              { name: '네이버 GFA', imp: gfaImpressions, click: gfaClicks, ctr: gfaCtr, cost: gfaCostSum, conv: gfaConversions, rev: gfaRevenue, roas: gfaRoas, color: 'border-blue-500 hover:border-blue-600' },
+              { name: '쿠팡 (부가세 포함)', imp: coupangImpressions, click: coupangClicks, ctr: coupangCtr, cost: coupangCost, conv: coupangConversions, rev: coupangRevenue, roas: coupangRoas, color: 'border-orange-500 hover:border-orange-600' }
+            ].map((media, index) => (
+              <div key={index} className={`bg-card rounded-xl border-l-4 ${media.color} border border-border shadow-sm overflow-hidden hover:shadow-md transition-all duration-200`}>
+                <div className="px-6 py-4 bg-secondary/20 flex items-center justify-between border-b border-border">
+                  <h4 className="font-bold text-foreground text-base">{media.name}</h4>
+                  <span className="text-xs bg-primary/10 text-primary font-semibold px-2.5 py-1 rounded-full">ROAS {media.roas.toFixed(1)}%</span>
+                </div>
+                <div className="px-6 py-6 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 text-center">
+                  <div>
+                    <span className="text-xs text-muted-foreground block">노출수</span>
+                    <span className="text-sm font-bold text-foreground mt-1 block">{(media.imp || 0).toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">클릭수</span>
+                    <span className="text-sm font-bold text-foreground mt-1 block">{(media.click || 0).toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">클릭률 (CTR)</span>
+                    <span className="text-sm font-semibold text-foreground mt-1 block">{media.ctr.toFixed(2)} %</span>
+                  </div>
+                  <div className="bg-primary/5 rounded-lg py-1 px-2 border border-primary/10">
+                    <span className="text-xs text-primary font-medium block">광고비</span>
+                    <span className="text-sm font-extrabold text-foreground mt-1 block">{(media.cost || 0).toLocaleString()} 원</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">전환수</span>
+                    <span className="text-sm font-bold text-foreground mt-1 block">{(media.conv || 0).toLocaleString()} 건</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">전환매출</span>
+                    <span className="text-sm font-bold text-foreground mt-1 block">{(media.rev || 0).toLocaleString()} 원</span>
+                  </div>
+                  <div className="bg-accent/5 rounded-lg py-1 px-2 border border-accent/10">
+                    <span className="text-xs text-accent font-medium block">ROAS</span>
+                    <span className="text-sm font-extrabold text-foreground mt-1 block">{media.roas.toFixed(2)} %</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const hasFilesToProcess = Object.values(files).some(fileArr => fileArr.length > 0);
 
   return (
@@ -730,91 +1053,31 @@ export default function DashboardPage() {
                 <h3 className="text-sm font-medium text-muted-foreground">총 광고비</h3>
                 <div className="p-2 bg-primary/10 rounded-md"><DollarSign className="w-4 h-4 text-primary" /></div>
               </div>
-              <div className="text-2xl font-bold">{totalCost.toLocaleString()} 원</div>
+              <div className="text-2xl font-bold">{displayTotalCost.toLocaleString()} 원</div>
             </div>
             <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
               <div className="flex items-center justify-between pb-2">
-                <h3 className="text-sm font-medium text-muted-foreground">평균 ROAS</h3>
+                <h3 className="text-sm font-medium text-muted-foreground">ROAS</h3>
                 <div className="p-2 bg-accent/20 rounded-md"><TrendingUp className="w-4 h-4 text-accent" /></div>
               </div>
-              <div className="text-2xl font-bold">{avgRoas.toFixed(2)} %</div>
+              <div className="text-2xl font-bold">{displayRoas.toFixed(2)} %</div>
             </div>
             <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
               <div className="flex items-center justify-between pb-2">
                 <h3 className="text-sm font-medium text-muted-foreground">총 전환수</h3>
                 <div className="p-2 bg-primary/10 rounded-md"><Activity className="w-4 h-4 text-primary" /></div>
               </div>
-              <div className="text-2xl font-bold">{totalConversions.toLocaleString()} 건</div>
+              <div className="text-2xl font-bold">{displayTotalConversions.toLocaleString()} 건</div>
             </div>
             <div className="bg-card rounded-xl p-6 shadow-sm border border-border">
               <div className="flex items-center justify-between pb-2">
-                <h3 className="text-sm font-medium text-muted-foreground">평균 클릭률(CTR)</h3>
-                <div className="p-2 bg-accent/20 rounded-md"><MousePointerClick className="w-4 h-4 text-accent" /></div>
+                <h3 className="text-sm font-medium text-muted-foreground">총 전환매출</h3>
+                <div className="p-2 bg-accent/20 rounded-md"><DollarSign className="w-4 h-4 text-accent" /></div>
               </div>
-              <div className="text-2xl font-bold">{avgCtr.toFixed(2)} %</div>
+              <div className="text-2xl font-bold">{displayTotalConversionRevenue.toLocaleString()} 원</div>
             </div>
           </motion.div>
         </AnimatePresence>
-      )}
-
-      {/* Data Table Preview */}
-      {(parsedData.length > 0) && (
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-card rounded-xl shadow-sm border border-border overflow-hidden mt-8"
-        >
-          <div className="px-6 py-4 border-b border-border bg-secondary/30 flex items-center justify-between">
-            <h3 className="font-semibold text-foreground">데이터 미리보기</h3>
-            <span className="text-xs font-medium text-muted-foreground bg-secondary px-2 py-1 rounded-md">총 {parsedData.length}개의 행 발견됨</span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs text-muted-foreground bg-secondary/50 uppercase">
-                <tr>
-                  <th className="px-6 py-3">분류</th>
-                  <th className="px-6 py-3">매체</th>
-                  <th className="px-6 py-3">일자/기간</th>
-                  <th className="px-6 py-3">캠페인명 / 키워드</th>
-                  <th className="px-6 py-3">노출수</th>
-                  <th className="px-6 py-3">클릭수</th>
-                  <th className="px-6 py-3">광고비</th>
-                  <th className="px-6 py-3">전환수</th>
-                  <th className="px-6 py-3">ROAS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {parsedData.slice(0, 10).map((row, idx) => (
-                  <tr key={row.id} className="border-b border-border hover:bg-secondary/20 transition-colors">
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${row.dataType === 'daily' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'}`}>
-                        {row.dataType === 'daily' ? '일별' : '키워드'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 font-medium text-primary">
-                      {row.platform === 'naver' ? '네이버' : row.platform === 'gfa' ? 'GFA' : '쿠팡'}
-                    </td>
-                    <td className="px-6 py-4">{row.date || '-'}</td>
-                    <td className="px-6 py-4 truncate max-w-[200px]">
-                      <div className="font-medium">{row.dataType === 'keyword' ? (row.keyword || '-') : (row.campaignName || '-')}</div>
-                      {row.dataType === 'daily' && row.adGroupName && <div className="text-xs text-muted-foreground truncate">{row.adGroupName}</div>}
-                    </td>
-                    <td className="px-6 py-4">{(row.impressions || 0).toLocaleString()}</td>
-                    <td className="px-6 py-4">{(row.clicks || 0).toLocaleString()}</td>
-                    <td className="px-6 py-4 font-medium text-foreground">{(row.cost || 0).toLocaleString()}</td>
-                    <td className="px-6 py-4">{(row.conversions || 0).toLocaleString()}</td>
-                    <td className="px-6 py-4 text-accent font-medium">{(row.roas || 0).toLocaleString()}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {parsedData.length > 10 && (
-            <div className="px-6 py-3 border-t border-border bg-secondary/30 text-center text-sm text-muted-foreground">
-              외 {parsedData.length - 10}개의 행이 더 있습니다. 전체 데이터는 엑셀 다운로드를 통해 확인하세요.
-            </div>
-          )}
-        </motion.div>
       )}
     </div>
   );

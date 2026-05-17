@@ -1,26 +1,57 @@
+'use client';
+
 import Link from 'next/link';
-import { LayoutDashboard, FileSpreadsheet, Settings, HelpCircle } from 'lucide-react';
+import { LayoutDashboard, BarChart3, HelpCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 export function Sidebar() {
+  const [hash, setHash] = useState('');
+
+  useEffect(() => {
+    setHash(window.location.hash);
+    const handleHashChange = () => {
+      setHash(window.location.hash);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    const interval = setInterval(handleHashChange, 100);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const isSummary = hash === '#summary';
+
   return (
     <aside className="w-64 bg-sidebar border-r border-sidebar-border hidden md:flex flex-col h-screen fixed top-0 left-0">
       <div className="p-6">
-        <h1 className="text-2xl font-bold text-sidebar-primary tracking-tight">AdReport Pro</h1>
+        <h1 className="text-2xl font-bold text-sidebar-primary tracking-tight">LarzX Report</h1>
       </div>
       
       <nav className="flex-1 px-4 space-y-2 mt-4">
-        <Link href="/" className="flex items-center gap-3 px-3 py-2 bg-sidebar-accent text-sidebar-accent-foreground rounded-lg font-medium transition-colors">
-          <LayoutDashboard className="w-5 h-5 text-sidebar-primary" />
+        <a 
+          href="#" 
+          className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-colors ${
+            !isSummary 
+              ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold' 
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+          }`}
+        >
+          <LayoutDashboard className={`w-5 h-5 ${!isSummary ? 'text-sidebar-primary' : ''}`} />
           통합 대시보드
-        </Link>
-        <Link href="/reports" className="flex items-center gap-3 px-3 py-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground rounded-lg font-medium transition-colors">
-          <FileSpreadsheet className="w-5 h-5" />
-          과거 리포트
-        </Link>
-        <Link href="/settings" className="flex items-center gap-3 px-3 py-2 text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground rounded-lg font-medium transition-colors">
-          <Settings className="w-5 h-5" />
-          설정
-        </Link>
+        </a>
+        <a 
+          href="#summary" 
+          className={`flex items-center gap-3 px-3 py-2 rounded-lg font-medium transition-colors ${
+            isSummary 
+              ? 'bg-sidebar-accent text-sidebar-accent-foreground font-semibold' 
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
+          }`}
+        >
+          <BarChart3 className={`w-5 h-5 ${isSummary ? 'text-sidebar-primary' : ''}`} />
+          요약보기
+        </a>
       </nav>
 
       <div className="p-4 mt-auto">
