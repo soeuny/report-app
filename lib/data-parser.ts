@@ -29,10 +29,10 @@ const COMMON_MAPPINGS = {
   impressions: ['노출', 'impression'],
   clicks: ['클릭', 'click'],
   cost: ['비용', '광고비', '지출액', '총비용', '소진', 'cost'],
-  conversions: ['구매완료전환수', '전환', '결제수', '구매수', '구매건수', 'conversion'],
+  conversions: ['구매완료전환수', '구매완료수', '총판매수량(14일)', '판매수량', '전환', '결제수', '구매수', '구매건수', 'conversion'],
   roas: ['roas', '수익률'],
   campaignType: ['캠페인유형', 'campaigntype', '유형'],
-  conversionRevenue: ['구매완료전환매출액(원)', '구매완료전환매출액', '전환매출', '전환매출액', '매출액', 'revenue'],
+  conversionRevenue: ['구매완료전환매출액(원)', '구매완료전환매출액', '총전환매출액(14일)', '전환매출', '전환매출액', '매출액', 'revenue'],
 };
 
 /**
@@ -73,14 +73,18 @@ function parseNumber(value: any): number {
 
 /**
  * 날짜 형식을 YYYY-MM-DD로 정규화합니다.
- * '2026.05.01.' -> '2026-05-01'
+ * '2026.05.01.', '20260501', '26-05-01' 등 다양한 형식을 지원합니다.
  * 엑셀 시리얼 넘버(예: 46143)도 지원합니다.
  */
 function normalizeDateStr(value: any): string {
   if (value === null || value === undefined || value === '' || value === '-') return '-';
 
-  // 1) 엑셀 시리얼 넘버 (숫자인 경우)
+  // 1) 엑셀 시리얼 넘버 또는 8자리 숫자
   if (typeof value === 'number') {
+    if (value >= 10000000 && value <= 99999999) {
+      const s = String(value);
+      return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+    }
     const excelEpoch = new Date(1899, 11, 30);
     const d = new Date(excelEpoch.getTime() + value * 86400000);
     if (!isNaN(d.getTime())) {
@@ -94,12 +98,24 @@ function normalizeDateStr(value: any): string {
     return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   }
 
-  // 3) 문자열인 경우: 숫자만 추출 (e.g. "2026.05.01." -> ["2026", "05", "01"])
-  const dateStr = String(value);
+  // 3) 문자열인 경우
+  let dateStr = String(value).trim().replace(/\s+/g, '');
+
+  // 3-1) YYYYMMDD 또는 YYMMDD 형식인 경우 (숫자만 연속)
+  if (/^\d{8}$/.test(dateStr)) {
+    return `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
+  }
+  if (/^\d{6}$/.test(dateStr)) {
+    return `20${dateStr.slice(0, 2)}-${dateStr.slice(2, 4)}-${dateStr.slice(4, 6)}`;
+  }
+
+  // 3-2) 구분자 있는 문자열
   const parts = dateStr.split(/[^0-9]+/).filter(p => p.length > 0);
-  
   if (parts.length >= 3) {
-    const yyyy = parts[0];
+    let yyyy = parts[0];
+    if (yyyy.length === 2) {
+      yyyy = `20${yyyy}`;
+    }
     const mm = parts[1].padStart(2, '0');
     const dd = parts[2].padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
@@ -197,6 +213,27 @@ export function normalizeData(rawData: any[][], platform: string, dataType: 'dai
       mappedRow.campaignType = type;
       if (row[5] !== undefined) mappedRow.conversions = parseNumber(row[5]);
       if (row[6] !== undefined) mappedRow.conversionRevenue = parseNumber(row[6]);
+    }
+
+    // [쿠팡 일별] 특수 규칙: 사용자 요청에 따라 특정 열 강제 매핑
+    if (platform === 'coupang' && dataType === 'daily') {
+      mappedRow.date = normalizeDateStr(row[0]);
+      mappedRow.impressions = parseNumber(row[7]);
+      mappedRow.clicks = parseNumber(row[8]);
+      mappedRow.cost = parseNumber(row[9]);
+      mappedRow.conversions = parseNumber(row[23]);
+      mappedRow.conversionRevenue = parseNumber(row[26]);
+    }
+
+    // [쿠팡 키워드] 특수 규칙: 사용자 요청에 따라 특정 열 강제 매핑
+    if (platform === 'coupang' && dataType === 'keyword') {
+      mappedRow.adGroupName = row[6] !== undefined && row[6] !== null ? String(row[6]) : '-';
+      mappedRow.keyword = row[11] !== undefined && row[11] !== null ? String(row[11]) : '-';
+      mappedRow.impressions = parseNumber(row[12]);
+      mappedRow.clicks = parseNumber(row[13]);
+      mappedRow.cost = parseNumber(row[14]);
+      mappedRow.conversions = parseNumber(row[28]);
+      mappedRow.conversionRevenue = parseNumber(row[31]);
     }
 
     // 노출수나 클릭수 등 핵심 지표가 아예 없으면 유효하지 않은 데이터로 간주하고 무시 (합계(총계) 행 등 제외용)

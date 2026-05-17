@@ -351,6 +351,247 @@ export default function DashboardPage() {
       console.log(`네이버쇼핑_누적 시트 업데이트 완료: ${naverKeyword.length}행 입력됨`);
     }
 
+    // -- 3. GFA 일별 처리 --
+    const gfaDailySheet = getWorksheetRobust('네이버GFA_일일');
+    if (gfaDailySheet) {
+      const gfaDaily = parsedData.filter(d => d.platform === 'gfa' && d.dataType === 'daily');
+
+      const gfaDateMap: Record<string, any> = {};
+      gfaDaily.forEach(d => {
+        if (!gfaDateMap[d.date]) {
+          gfaDateMap[d.date] = { impressions: 0, clicks: 0, cost: 0, conversions: 0, conversionRevenue: 0 };
+        }
+        gfaDateMap[d.date].impressions += (d.impressions || 0);
+        gfaDateMap[d.date].clicks += (d.clicks || 0);
+        gfaDateMap[d.date].cost += (d.cost || 0);
+        gfaDateMap[d.date].conversions += (d.conversions || 0);
+        gfaDateMap[d.date].conversionRevenue += (d.conversionRevenue || 0);
+      });
+
+      let matchCount = 0;
+      for (let rowIdx = 21; rowIdx <= 51; rowIdx++) {
+        const dateCell = gfaDailySheet.getCell(rowIdx, 2);
+        if (dateCell.value) {
+          let targetDate = "";
+          if (dateCell.value instanceof Date) {
+            const d = dateCell.value;
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else if (typeof dateCell.value === 'number') {
+            const excelEpoch = new Date(1899, 11, 30);
+            const d = new Date(excelEpoch.getTime() + dateCell.value * 86400000);
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else {
+            const parts = String(dateCell.value).split(/[^0-9]+/).filter(p => p.length > 0);
+            if (parts.length >= 3) targetDate = `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+          }
+          
+          if (targetDate && gfaDateMap[targetDate]) {
+            const data = gfaDateMap[targetDate];
+            writeCell(gfaDailySheet, rowIdx, 4, data.impressions);
+            writeCell(gfaDailySheet, rowIdx, 5, data.clicks);
+            writeCell(gfaDailySheet, rowIdx, 8, data.cost);
+            writeCell(gfaDailySheet, rowIdx, 9, data.conversions);
+            writeCell(gfaDailySheet, rowIdx, 12, data.conversionRevenue);
+            matchCount++;
+          }
+        }
+      }
+      console.log(`[GFA 일별] 네이버GFA_일일 시트 업데이트 완료: ${matchCount}건 매칭됨`);
+    }
+
+    // -- 4. 쿠팡 일별 처리 --
+    const coupangDailySheet = getWorksheetRobust('쿠팡_일일');
+    if (coupangDailySheet) {
+      const coupangDaily = parsedData.filter(d => d.platform === 'coupang' && d.dataType === 'daily');
+
+      const coupangDateMap: Record<string, any> = {};
+      coupangDaily.forEach(d => {
+        if (!coupangDateMap[d.date]) {
+          coupangDateMap[d.date] = { impressions: 0, clicks: 0, cost: 0, conversions: 0, conversionRevenue: 0 };
+        }
+        coupangDateMap[d.date].impressions += (d.impressions || 0);
+        coupangDateMap[d.date].clicks += (d.clicks || 0);
+        coupangDateMap[d.date].cost += (d.cost || 0);
+        coupangDateMap[d.date].conversions += (d.conversions || 0);
+        coupangDateMap[d.date].conversionRevenue += (d.conversionRevenue || 0);
+      });
+
+      let matchCount = 0;
+      for (let rowIdx = 21; rowIdx <= 51; rowIdx++) {
+        const dateCell = coupangDailySheet.getCell(rowIdx, 2);
+        if (dateCell.value) {
+          let targetDate = "";
+          if (dateCell.value instanceof Date) {
+            const d = dateCell.value;
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else if (typeof dateCell.value === 'number') {
+            const excelEpoch = new Date(1899, 11, 30);
+            const d = new Date(excelEpoch.getTime() + dateCell.value * 86400000);
+            targetDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+          } else {
+            const rawVal = String(dateCell.value).trim().replace(/\s+/g, '');
+            if (/^\d{8}$/.test(rawVal)) {
+              targetDate = `${rawVal.slice(0, 4)}-${rawVal.slice(4, 6)}-${rawVal.slice(6, 8)}`;
+            } else if (/^\d{6}$/.test(rawVal)) {
+              targetDate = `20${rawVal.slice(0, 2)}-${rawVal.slice(2, 4)}-${rawVal.slice(4, 6)}`;
+            } else {
+              const parts = rawVal.split(/[^0-9]+/).filter(p => p.length > 0);
+              if (parts.length >= 3) {
+                let yyyy = parts[0];
+                if (yyyy.length === 2) yyyy = `20${yyyy}`;
+                targetDate = `${yyyy}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+              }
+            }
+          }
+          
+          if (targetDate && coupangDateMap[targetDate]) {
+            const data = coupangDateMap[targetDate];
+            writeCell(coupangDailySheet, rowIdx, 4, data.impressions);
+            writeCell(coupangDailySheet, rowIdx, 5, data.clicks);
+            writeCell(coupangDailySheet, rowIdx, 8, Math.round(data.cost * 1.1));
+            writeCell(coupangDailySheet, rowIdx, 9, data.conversions);
+            writeCell(coupangDailySheet, rowIdx, 12, data.conversionRevenue);
+            matchCount++;
+          }
+        }
+      }
+      console.log(`[쿠팡 일별] 쿠팡_일일 시트 업데이트 완료: ${matchCount}건 매칭됨`);
+    }
+
+    // -- 5. 쿠팡 키워드 처리 --
+    const coupangKeywordSheet = getWorksheetRobust('쿠팡_누적');
+    if (coupangKeywordSheet) {
+      const coupangKeyword = parsedData.filter(d => 
+        d.platform === 'coupang' && 
+        d.dataType === 'keyword'
+      );
+
+      // 5-1. 상품명 기준 중복 합산 (9행부터 아래로 기입)
+      const productGroups: Record<string, {
+        productName: string;
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+        conversionRevenue: number;
+      }> = {};
+
+      coupangKeyword.forEach(d => {
+        const prod = (d.adGroupName || '-').trim();
+        if (!productGroups[prod]) {
+          productGroups[prod] = {
+            productName: prod,
+            impressions: 0,
+            clicks: 0,
+            cost: 0,
+            conversions: 0,
+            conversionRevenue: 0
+          };
+        }
+        productGroups[prod].impressions += (d.impressions || 0);
+        productGroups[prod].clicks += (d.clicks || 0);
+        productGroups[prod].cost += (d.cost || 0);
+        productGroups[prod].conversions += (d.conversions || 0);
+        productGroups[prod].conversionRevenue += (d.conversionRevenue || 0);
+      });
+
+      const aggregatedProducts = Object.values(productGroups);
+
+      // 다중 정렬 적용: 1순위 conversions 내림차순, 2순위 cost 내림차순
+      aggregatedProducts.sort((a, b) => {
+        if (b.conversions !== a.conversions) {
+          return b.conversions - a.conversions;
+        }
+        return b.cost - a.cost;
+      });
+
+      // 9행부터 순차 기입
+      let productRow = 9;
+      aggregatedProducts.forEach(d => {
+        writeCell(coupangKeywordSheet, productRow, 3, d.productName);
+        writeCell(coupangKeywordSheet, productRow, 4, d.impressions);
+        writeCell(coupangKeywordSheet, productRow, 5, d.clicks);
+        writeCell(coupangKeywordSheet, productRow, 8, Math.round(d.cost * 1.1));
+        writeCell(coupangKeywordSheet, productRow, 9, d.conversions);
+        writeCell(coupangKeywordSheet, productRow, 12, d.conversionRevenue);
+        productRow++;
+      });
+      console.log(`[쿠팡 키워드] 쿠팡_누적 시트 상품별 요약 완료: ${aggregatedProducts.length}개 상품 입력됨`);
+
+      // 5-2. 키워드별 그룹화 및 합산 (36행부터 아래로 기입)
+      const keywordGroups: Record<string, {
+        keyword: string;
+        impressions: number;
+        clicks: number;
+        cost: number;
+        conversions: number;
+        conversionRevenue: number;
+      }> = {};
+
+      coupangKeyword.forEach(d => {
+        const kw = (d.keyword || '-').trim();
+        if (!keywordGroups[kw]) {
+          keywordGroups[kw] = {
+            keyword: kw,
+            impressions: 0,
+            clicks: 0,
+            cost: 0,
+            conversions: 0,
+            conversionRevenue: 0
+          };
+        }
+        keywordGroups[kw].impressions += (d.impressions || 0);
+        keywordGroups[kw].clicks += (d.clicks || 0);
+        keywordGroups[kw].cost += (d.cost || 0);
+        keywordGroups[kw].conversions += (d.conversions || 0);
+        keywordGroups[kw].conversionRevenue += (d.conversionRevenue || 0);
+      });
+
+      // 객체를 배열로 변환
+      const aggregatedKeywords = Object.values(keywordGroups);
+
+      // 다중 정렬 적용:
+      // 1순위: 총 판매수량(14일)(conversions) 내림차순
+      // 2순위: 광고비(cost) 내림차순
+      aggregatedKeywords.sort((a, b) => {
+        if (b.conversions !== a.conversions) {
+          return b.conversions - a.conversions;
+        }
+        return b.cost - a.cost;
+      });
+
+      // 36행부터 아래로 순차 기입
+      let currentRow = 36;
+      aggregatedKeywords.forEach(d => {
+        // C(3): 키워드, D(4): 노출수, E(5): 클릭수, H(8): 광고비, I(9): 총 판매수량(14일), L(12): 총 전환매출액(14일)
+        writeCell(coupangKeywordSheet, currentRow, 3, d.keyword);
+        writeCell(coupangKeywordSheet, currentRow, 4, d.impressions);
+        writeCell(coupangKeywordSheet, currentRow, 5, d.clicks);
+        // 최종 합산된 광고비에 1.1 곱하고 반올림
+        writeCell(coupangKeywordSheet, currentRow, 8, Math.round(d.cost * 1.1));
+        writeCell(coupangKeywordSheet, currentRow, 9, d.conversions);
+        writeCell(coupangKeywordSheet, currentRow, 12, d.conversionRevenue);
+        currentRow++;
+      });
+      console.log(`[쿠팡 키워드] 쿠팡_누적 시트 업데이트 완료: ${aggregatedKeywords.length}개 키워드(중복 합산 및 정렬 적용) 입력됨`);
+    }
+
+    // -- 6. 요약 시트 기준 날짜 기입 --
+    const summarySheet = getWorksheetRobust('요약');
+    if (summarySheet) {
+      // 한국 표준시(KST)를 준수하는 어제 날짜 구하기
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      const yy = String(yesterday.getFullYear()).slice(-2);
+      const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
+      const dd = String(yesterday.getDate()).padStart(2, '0');
+      const formattedDate = `${yy}-${mm}-${dd}`;
+
+      writeCell(summarySheet, 35, 3, formattedDate); // C35 셀
+      console.log(`[요약] C35 셀 기준 날짜 입력 완료: ${formattedDate}`);
+    }
+
     // 파일 저장
     const dateObj = new Date();
     const yy = String(dateObj.getFullYear()).slice(-2);
